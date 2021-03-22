@@ -1,4 +1,4 @@
-module Scene exposing (Scene, fromGLTF, getCameras, getDrawables)
+module Scene exposing (Camera, Scene, fromGLTF, getCameras, getDrawables)
 
 import GLTF
 import Math.Matrix4 as Mat4
