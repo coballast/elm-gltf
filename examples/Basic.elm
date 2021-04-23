@@ -2,11 +2,15 @@ module Basic exposing (main)
 
 import Browser
 import Browser.Events
+import Buffer exposing (Uri(..), unwrapUri)
+import Bytes exposing (Bytes)
+import Dict exposing (Dict)
 import Embedded
-import GLTF
+import GLTF exposing (..)
 import Html exposing (Html, br, button, div, input, label, option, select, text)
 import Html.Attributes exposing (height, selected, style, type_, value, width)
 import Html.Events exposing (onCheck, onClick, onInput)
+import Http
 import Json.Decode as JD
 import Math.Matrix4 as Mat4 exposing (Mat4)
 import Math.Vector2 exposing (Vec2, vec2)
@@ -14,6 +18,7 @@ import Math.Vector3 exposing (Vec3, vec3)
 import Mesh
 import Scene
 import Task
+import Url.Builder exposing (crossOrigin)
 import Util exposing (listGetAt)
 import WebGL
 import WebGL.Texture as Texture exposing (Texture)
@@ -23,9 +28,13 @@ type alias Model =
     { meshes : List ( Mat4, WebGL.Mesh Mesh.PositionNormalTexCoordsAttributes )
     , cameras : List ( Mat4, Scene.Camera )
     , texture : Maybe Texture
-    , currentCamera : ( Mat4, GLTF.Camera )
+    , currentCamera : Maybe ( Mat4, GLTF.Camera )
     , elapsedTime : Float
     , rotationActive : Bool
+    , gltfScene : Maybe GLTF.GLTF
+    , linkedAssets : List Buffer.Uri
+    , linkedAssetValues : Dict String Bytes
+    , images : Dict String Texture
     }
 
 
@@ -40,49 +49,67 @@ mulMatrices =
 
 init : flags -> ( Model, Cmd Msg )
 init _ =
-    let
-        sceneResult =
-            JD.decodeString GLTF.gltfEmbeddedDecoder Embedded.duckEmbedded
-                |> Result.mapError JD.errorToString
-                |> Result.map
-                    (\gltf ->
-                        let
-                            _ =
-                                Debug.log "GLTF" (GLTF.getNodes gltf)
-                        in
-                        gltf
-                    )
-                |> Result.andThen (Scene.fromGLTF >> Result.fromMaybe "Could not make scene")
-                |> Result.map
-                    (\scene ->
-                        ( Debug.log "Meshes" <| Scene.getDrawables scene
-                        , Debug.log "Cameras " <| Scene.getCameras scene
-                        )
-                    )
-    in
-    case sceneResult of
-        Ok ( meshes, cameras ) ->
-            ( { meshes = meshes
-              , cameras = cameras
-              , texture = Nothing
-              , currentCamera = defaultCamera
-              , elapsedTime = 0
-              , rotationActive = False
-              }
-            , Task.attempt GotTexture <|
-                -- TODO make this dynamic instead of hardcoded
-                Texture.loadWith
-                    { magnify = Texture.linear
-                    , minify = Texture.nearestMipmapLinear
-                    , horizontalWrap = Texture.repeat
-                    , verticalWrap = Texture.repeat
-                    , flipY = False
-                    }
-                    Embedded.textureEmbedded
-            )
+    ( { meshes = []
+      , cameras = []
+      , texture = Nothing
+      , currentCamera = Nothing
+      , elapsedTime = 0
+      , rotationActive = False
+      , gltfScene = Nothing
+      , linkedAssets = []
+      , linkedAssetValues = Dict.empty
+      , images = Dict.empty
+      }
+    , loadGltf
+    )
 
-        Err err ->
-            Debug.todo err
+
+
+{- let
+       sceneResult =
+           JD.decodeString GLTF.gltfEmbeddedDecoder Embedded.duckEmbedded
+               |> Result.mapError JD.errorToString
+               |> Result.map
+                   (\gltf ->
+                       let
+                           _ =
+                               Debug.log "GLTF" (GLTF.getNodes gltf)
+                       in
+                       gltf
+                   )
+               |> Result.andThen (Scene.fromGLTF >> Result.fromMaybe "Could not make scene")
+               |> Result.map
+                   (\scene ->
+                       ( Debug.log "Meshes" <| Scene.getDrawables scene
+                       , Debug.log "Cameras " <| Scene.getCameras scene
+                       )
+                   )
+   in
+   case sceneResult of
+       Ok ( meshes, cameras ) ->
+           ( { meshes = meshes
+             , cameras = cameras
+             , texture = Nothing
+             , currentCamera = defaultCamera
+             , elapsedTime = 0
+             , rotationActive = False
+             , gltfScene = Loading
+             }
+           , Task.attempt GotTexture <|
+               -- TODO make this dynamic instead of hardcoded
+               Texture.loadWith
+                   { magnify = Texture.linear
+                   , minify = Texture.nearestMipmapLinear
+                   , horizontalWrap = Texture.repeat
+                   , verticalWrap = Texture.repeat
+                   , flipY = False
+                   }
+                   Embedded.textureEmbedded
+           )
+
+       Err err ->
+           Debug.todo err
+-}
 
 
 type Msg
@@ -90,6 +117,31 @@ type Msg
     | CameraChanged String
     | Tick Float
     | RotateChange Bool
+    | LoadGLTF
+    | GotGLTF (Result Http.Error GLTF.GLTF)
+    | GotBytes (Result Http.Error ( String, Bytes.Bytes ))
+    | LoadImages
+
+
+expectRawBytes : (Result Http.Error ( String, Bytes.Bytes ) -> msg) -> Http.Expect msg
+expectRawBytes toMsg =
+    Http.expectBytesResponse toMsg <|
+        \response ->
+            case response of
+                Http.BadUrl_ url ->
+                    Err (Http.BadUrl url)
+
+                Http.Timeout_ ->
+                    Err Http.Timeout
+
+                Http.NetworkError_ ->
+                    Err Http.NetworkError
+
+                Http.BadStatus_ metadata body ->
+                    Err (Http.BadStatus metadata.statusCode)
+
+                Http.GoodStatus_ metadata body ->
+                    Ok ( metadata.url, body )
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -101,6 +153,14 @@ update msg model =
         GotTexture (Err error) ->
             ( model, Cmd.none )
 
+        GotGLTF result ->
+            case result of
+                Ok scene ->
+                    ( { model | gltfScene = Just scene }, linkedAssets scene )
+
+                Err _ ->
+                    ( { model | gltfScene = Nothing }, Cmd.none )
+
         CameraChanged value ->
             let
                 camera =
@@ -110,13 +170,24 @@ update msg model =
                         |> Maybe.withDefault defaultCamera
                         |> Debug.log "default camera"
             in
-            ( { model | currentCamera = camera }, Cmd.none )
+            ( { model | currentCamera = Just camera }, Cmd.none )
 
         Tick millis ->
             ( { model | elapsedTime = model.elapsedTime + millis }, Cmd.none )
 
         RotateChange active ->
             ( { model | rotationActive = active }, Cmd.none )
+
+        LoadGLTF ->
+            ( model, loadGltf )
+
+        GotBytes result ->
+            case result of
+                Ok ( url, bytes ) ->
+                    ( { model | linkedAssetValues = Dict.insert url bytes model.linkedAssetValues }, Cmd.none )
+
+                Err _ ->
+                    ( model, Cmd.none )
 
 
 type alias Attributes =
@@ -134,6 +205,44 @@ type alias Uniforms =
     { transform : Mat4
     , texture : Texture
     }
+
+
+loadGltf : Cmd Msg
+loadGltf =
+    Http.get
+        { url = crossOrigin "http://localhost:8080" [ "Duck.gltf" ] []
+        , expect = Http.expectJson GotGLTF GLTF.gltfEmbeddedDecoder
+        }
+
+
+linkedAssets : GLTF.GLTF -> Cmd Msg
+linkedAssets (GLTF.GLTF gltf) =
+    gltf.buffers
+        |> List.map
+            (\current ->
+                case current.uri of
+                    RemoteUri uri ->
+                        Http.get { url = crossOrigin "http://localhost:8080" [ uri ] [], expect = expectRawBytes GotBytes }
+
+                    DataUri uri ->
+                        Http.get { url = uri, expect = expectRawBytes GotBytes }
+            )
+        |> Cmd.batch
+
+
+bufferLoadComplete : GLTF.GLTF -> Dict String Bytes.Bytes -> Cmd Msg
+bufferLoadComplete (GLTF.GLTF gltf) bufferDict =
+    if List.all (\buffer -> Dict.member (unwrapUri buffer.uri) bufferDict) gltf.buffers then
+        loadImages gltf
+
+    else
+        Cmd.none
+
+
+
+{- loadImages : GLTF.GLTF -> Cmd Msg
+   loadImages (GLTF.GLTF gltf) =
+-}
 
 
 perspectiveMatrix : GLTF.Camera -> Mat4
@@ -295,7 +404,7 @@ view model =
                     texture
                     model.cameras
                     model.meshes
-                    model.currentCamera
+                    defaultCamera
 
             Nothing ->
                 div [] [ text "Waiting for texture ..." ]

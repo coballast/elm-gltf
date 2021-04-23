@@ -1,8 +1,9 @@
 module GLTF exposing (..)
 
-import Buffer exposing (Accessor, Buffer, BufferView)
+import Buffer exposing (Accessor, Buffer, BufferView, unwrapUri)
 import Bytes exposing (Bytes)
 import Bytes.Extra as BE
+import Dict exposing (Dict)
 import Json.Decode as JD
 import Json.Decode.Pipeline as JDP
 import Math.Matrix4 as Mat4
@@ -715,14 +716,17 @@ gltfEmbeddedDecoder =
         |> JDP.custom buffersDecoder
 
 
-resolveAccessors : GLTF -> Maybe (List Buffer.ResolvedAccessor)
-resolveAccessors (GLTF gltf) =
+resolveAccessors : GLTF -> Dict String Bytes -> Maybe (List Buffer.ResolvedAccessor)
+resolveAccessors (GLTF gltf) bufferDict =
     let
         maybeBuffers =
             List.foldr
                 (\current seq ->
                     Maybe.map2 (::)
-                        (Buffer.toBytes current.uri)
+                        (Dict.get
+                            (unwrapUri current.uri)
+                            bufferDict
+                        )
                         seq
                 )
                 (Just [])

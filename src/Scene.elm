@@ -1,5 +1,7 @@
 module Scene exposing (Camera, Scene, fromGLTF, getCameras, getDrawables)
 
+import Bytes exposing (Bytes)
+import Dict exposing (Dict)
 import GLTF
 import Math.Matrix4 as Mat4
 import Mesh
@@ -14,11 +16,11 @@ type Node
     | Group Mat4.Mat4 (List Node)
 
 
-fromGLTF : GLTF.GLTF -> Maybe Scene
-fromGLTF gltf =
+fromGLTF : GLTF.GLTF -> Dict String Bytes -> Maybe Scene
+fromGLTF gltf bufferDict =
     let
         maybeMeshes =
-            GLTF.resolveAccessors gltf
+            GLTF.resolveAccessors gltf bufferDict
                 |> Maybe.andThen
                     (\accessors ->
                         List.map (Mesh.extractMesh accessors) (GLTF.getMeshes gltf)

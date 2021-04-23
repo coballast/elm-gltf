@@ -117,6 +117,16 @@ type Uri
     | RemoteUri String
 
 
+unwrapUri : Uri -> String
+unwrapUri uri =
+    case uri of
+        RemoteUri str ->
+            str
+
+        DataUri str ->
+            str
+
+
 
 -- resolving attributes
 
@@ -132,22 +142,6 @@ type alias ResolvedAccessor =
     , byteStride : Int
     , target : Maybe BufferType
     }
-
-
-toBytes : Uri -> Maybe Bytes
-toBytes uri =
-    let
-        uriString =
-            case uri of
-                DataUri str ->
-                    str
-
-                RemoteUri _ ->
-                    Debug.todo "Implement Me"
-    in
-    uriString
-        |> String.dropLeft (String.length "data:application/octet-stream;base64,")
-        |> Base64.toBytes
 
 
 intTriplesDecoder : ResolvedAccessor -> BD.Decoder (List ( Int, Int, Int ))
