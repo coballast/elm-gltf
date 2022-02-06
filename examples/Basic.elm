@@ -26,14 +26,13 @@ import WebGL.Texture as Texture exposing (Texture)
 type alias Model =
     { meshes : List ( Mat4, WebGL.Mesh Mesh.PositionNormalTexCoordsAttributes )
     , cameras : List ( Mat4, Scene.Camera )
-    , texture : Maybe Texture
+    , textures : List (Maybe Texture)
     , currentCamera : Maybe ( Mat4, GLTF.Camera )
     , elapsedTime : Float
     , rotationActive : Bool
     , gltfScene : Maybe GLTF.GLTF
     , linkedAssets : List Util.Uri
     , linkedAssetValues : Dict String Bytes
-    , images : Dict String Texture
     }
 
 
@@ -50,14 +49,13 @@ init : flags -> ( Model, Cmd Msg )
 init _ =
     ( { meshes = []
       , cameras = []
-      , texture = Nothing
+      , textures = []
       , currentCamera = Nothing
       , elapsedTime = 0
       , rotationActive = False
       , gltfScene = Nothing
       , linkedAssets = []
       , linkedAssetValues = Dict.empty
-      , images = Dict.empty
       }
     , loadGltf
     )
@@ -120,7 +118,6 @@ type Msg
     | GotGLTF (Result Http.Error GLTF.GLTF)
     | GotBytes (Result Http.Error ( String, Bytes.Bytes ))
     | ParseBuffers
-    | LoadImages
 
 
 expectRawBytes : (Result Http.Error ( String, Bytes.Bytes ) -> msg) -> Http.Expect msg
@@ -148,7 +145,7 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         GotTexture (Ok texture) ->
-            ( { model | texture = Just texture }, Cmd.none )
+            ( { model | textures = [ Just texture ] }, Cmd.none )
 
         GotTexture (Err error) ->
             ( model, Cmd.none )
@@ -156,7 +153,7 @@ update msg model =
         GotGLTF result ->
             case result of
                 Ok scene ->
-                    ( { model | gltfScene = Just scene }, linkedAssets scene )
+                    ( { model | gltfScene = Just scene }, Cmd.batch [ linkedAssets scene, loadTextures scene ] )
 
                 Err _ ->
                     ( { model | gltfScene = Nothing }, Cmd.none )
@@ -180,9 +177,6 @@ update msg model =
 
         LoadGLTF ->
             ( model, loadGltf )
-
-        LoadImages ->
-            ( model, Cmd.none )
 
         ParseBuffers ->
             ( model, Cmd.none )
@@ -236,9 +230,36 @@ linkedAssets (GLTF.GLTF gltf) =
         |> Cmd.batch
 
 
-loadImages : GLTF.GLTF -> Cmd Msg
-loadImages (GLTF.GLTF gltf) =
-    Cmd.none
+loadTextures : GLTF.GLTF -> Cmd Msg
+loadTextures (GLTF.GLTF gltf) =
+    gltf.textures
+        |> List.map
+            (\txinfo ->
+                let
+                    img =
+                        Util.listGetAt txinfo.source gltf.images
+                in
+                case img of
+                    Just imgval ->
+                        case imgval of
+                            ImageUri uri ->
+                                Task.attempt GotTexture <|
+                                    Texture.loadWith
+                                        { magnify = Texture.linear
+                                        , minify = Texture.nearestMipmapLinear
+                                        , horizontalWrap = Texture.repeat
+                                        , verticalWrap = Texture.repeat
+                                        , flipY = False
+                                        }
+                                        (crossOrigin "http://localhost:8080" [ Util.unwrapUri uri ] [])
+
+                            ImageBuffer mimeType bufferView ->
+                                Cmd.none
+
+                    _ ->
+                        Cmd.none
+            )
+        |> Cmd.batch
 
 
 perspectiveMatrix : GLTF.Camera -> Mat4
@@ -393,17 +414,7 @@ view : Model -> Html Msg
 view model =
     div []
         [ div [] [ text "GLTF! What the 🦆!" ]
-        , case model.texture of
-            Just texture ->
-                viewCanvas
-                    model.elapsedTime
-                    texture
-                    model.cameras
-                    model.meshes
-                    defaultCamera
-
-            Nothing ->
-                div [] [ text "Waiting for texture ..." ]
+        , div [] [ text "Waiting for textures ..." ]
         ]
 
 
