@@ -1,6 +1,6 @@
 module GLTF exposing (..)
 
-import Buffer exposing (Accessor, Buffer, BufferView, unwrapUri)
+import Buffer exposing (Accessor, Buffer, BufferView)
 import Bytes exposing (Bytes)
 import Bytes.Extra as BE
 import Dict exposing (Dict)
@@ -11,7 +11,7 @@ import Math.Vector3 as Vec3 exposing (vec3)
 import Math.Vector4 as Vec4 exposing (vec4)
 import Mesh exposing (Attributes, Mesh)
 import Set
-import Util exposing (defaultDecoder, listGetAt, maybeSequence)
+import Util exposing (Uri, defaultDecoder, listGetAt, maybeSequence, unwrapUri, uriDecoder)
 import WebGL
 
 
@@ -461,7 +461,7 @@ materialsDecoder =
 
 
 type Image
-    = ImageUri String
+    = ImageUri Util.Uri
     | ImageBuffer String String
 
 
@@ -473,7 +473,7 @@ imagesDecoder =
 imageDecoder : JD.Decoder Image
 imageDecoder =
     JD.oneOf
-        [ JD.map ImageUri (JD.field "uri" JD.string)
+        [ JD.map ImageUri (JD.field "uri" uriDecoder)
         , JD.map2
             ImageBuffer
             (JD.field "mimeType" JD.string)
@@ -648,23 +648,6 @@ bufferViewsDecoder =
                 (JD.maybe (JD.field "target" targetDecoder))
             )
         )
-
-
-
--- buffers
-
-
-uriDecoder : JD.Decoder Buffer.Uri
-uriDecoder =
-    JD.string
-        |> JD.map
-            (\uri ->
-                if String.startsWith "data:" uri then
-                    Buffer.DataUri uri
-
-                else
-                    Buffer.RemoteUri uri
-            )
 
 
 buffersDecoder : JD.Decoder (List Buffer)

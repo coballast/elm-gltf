@@ -1,12 +1,43 @@
 module Util exposing
-    ( defaultDecoder
+    ( Uri(..)
+    , defaultDecoder
     , listGetAt
     , listToTriples
     , maybeSequence
     , toIndexedList
+    , unwrapUri
+    , uriDecoder
     )
 
 import Json.Decode as JD
+
+
+type Uri
+    = DataUri String
+    | RemoteUri String
+
+
+unwrapUri : Uri -> String
+unwrapUri uri =
+    case uri of
+        RemoteUri str ->
+            str
+
+        DataUri str ->
+            str
+
+
+uriDecoder : JD.Decoder Uri
+uriDecoder =
+    JD.string
+        |> JD.map
+            (\uri ->
+                if String.startsWith "data:" uri then
+                    DataUri uri
+
+                else
+                    RemoteUri uri
+            )
 
 
 toIndexedList : List a -> List ( Int, a )

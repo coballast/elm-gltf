@@ -6,6 +6,7 @@ import Bytes.Decode as BD
 import Bytes.Decode.Extra as BDE
 import Math.Vector2 exposing (Vec2, vec2)
 import Math.Vector3 exposing (Vec3, vec3)
+import Util exposing (Uri)
 
 
 type alias Buffer =
@@ -110,21 +111,6 @@ type alias BufferView =
 type BufferType
     = ArrayBuffer
     | ElementArrayBuffer
-
-
-type Uri
-    = DataUri String
-    | RemoteUri String
-
-
-unwrapUri : Uri -> String
-unwrapUri uri =
-    case uri of
-        RemoteUri str ->
-            str
-
-        DataUri str ->
-            str
 
 
 

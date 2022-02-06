@@ -2,7 +2,6 @@ module Basic exposing (main)
 
 import Browser
 import Browser.Events
-import Buffer exposing (Uri(..), unwrapUri)
 import Bytes exposing (Bytes)
 import Dict exposing (Dict)
 import Embedded
@@ -19,7 +18,7 @@ import Mesh
 import Scene
 import Task
 import Url.Builder exposing (crossOrigin)
-import Util exposing (listGetAt)
+import Util exposing (Uri(..), listGetAt, unwrapUri)
 import WebGL
 import WebGL.Texture as Texture exposing (Texture)
 
@@ -32,7 +31,7 @@ type alias Model =
     , elapsedTime : Float
     , rotationActive : Bool
     , gltfScene : Maybe GLTF.GLTF
-    , linkedAssets : List Buffer.Uri
+    , linkedAssets : List Util.Uri
     , linkedAssetValues : Dict String Bytes
     , images : Dict String Texture
     }
@@ -120,6 +119,7 @@ type Msg
     | LoadGLTF
     | GotGLTF (Result Http.Error GLTF.GLTF)
     | GotBytes (Result Http.Error ( String, Bytes.Bytes ))
+    | ParseBuffers
     | LoadImages
 
 
@@ -181,6 +181,12 @@ update msg model =
         LoadGLTF ->
             ( model, loadGltf )
 
+        LoadImages ->
+            ( model, Cmd.none )
+
+        ParseBuffers ->
+            ( model, Cmd.none )
+
         GotBytes result ->
             case result of
                 Ok ( url, bytes ) ->
@@ -230,19 +236,9 @@ linkedAssets (GLTF.GLTF gltf) =
         |> Cmd.batch
 
 
-bufferLoadComplete : GLTF.GLTF -> Dict String Bytes.Bytes -> Cmd Msg
-bufferLoadComplete (GLTF.GLTF gltf) bufferDict =
-    if List.all (\buffer -> Dict.member (unwrapUri buffer.uri) bufferDict) gltf.buffers then
-        loadImages gltf
-
-    else
-        Cmd.none
-
-
-
-{- loadImages : GLTF.GLTF -> Cmd Msg
-   loadImages (GLTF.GLTF gltf) =
--}
+loadImages : GLTF.GLTF -> Cmd Msg
+loadImages (GLTF.GLTF gltf) =
+    Cmd.none
 
 
 perspectiveMatrix : GLTF.Camera -> Mat4
